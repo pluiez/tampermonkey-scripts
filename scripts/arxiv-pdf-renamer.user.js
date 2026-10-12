@@ -16,7 +16,7 @@
   'use strict';
 
   const ID_PATTERN = /^(\d{4}\.\d{4,5}|[a-z][a-z.-]*\/\d{7})(?:v(\d+))?$/i;
-  const POSITION_KEY = 'arxiv-floating-pdf-position-v1';
+  const POSITION_KEY = 'arxiv-pdf-renamer-position-v1';
   const FORBIDDEN_FILENAME_CHARS = /[<>:"/\\|?*\u0000-\u001f\u007f]/g;
   const POSITION_MARGIN = 12;
 
