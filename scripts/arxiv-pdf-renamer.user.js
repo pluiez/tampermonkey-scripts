@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         arXiv PDF 重命名下载
 // @namespace    https://github.com/pluiefox/tampermonkey-scripts
-// @version      1.2.1
+// @version      1.3.0
 // @description  在 arXiv 论文页面通过可拖动的悬浮按钮下载指定版本 PDF
 // @match        https://arxiv.org/abs/*
 // @match        https://www.arxiv.org/abs/*
@@ -19,6 +19,10 @@
   const POSITION_KEY = 'arxiv-pdf-renamer-position-v1';
   const FORBIDDEN_FILENAME_CHARS = /[<>:"/\\|?*\u0000-\u001f\u007f]/g;
   const POSITION_MARGIN = 12;
+  const DOCK_SIZE = 46;
+  const LABEL_MAX_WIDTH = 360;
+  const DONE_RESET_MS = 4000;
+  const ERROR_RESET_MS = 6500;
 
   function getAbsIdentifier(pathname) {
     const match = pathname.match(/^\/abs\/(.+?)\/?$/);
@@ -88,167 +92,144 @@
       z-index: 2147483647;
       pointer-events: none;
       color-scheme: light;
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family: "Lucida Grande", Helvetica, Arial, sans-serif;
     }
     *, *::before, *::after { box-sizing: border-box; }
-    .download-button {
+    .dock {
       position: fixed;
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      min-width: 220px;
-      padding: 9px 12px;
-      border: 1px solid #dcdee4;
-      border-radius: 6px;
-      color: #343640;
-      text-align: left;
-      cursor: grab;
-      user-select: none;
-      touch-action: none;
+      width: ${DOCK_SIZE}px;
+      height: ${DOCK_SIZE}px;
       pointer-events: auto;
-      background: #fff;
-      box-shadow: 0 3px 10px rgba(36, 38, 50, .09);
-      transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
-      animation: button-enter .55s cubic-bezier(.2, .85, .3, 1.25) both;
+      touch-action: none;
+      user-select: none;
       -webkit-tap-highlight-color: transparent;
     }
-    .download-button:hover {
-      transform: translateY(-2px);
-      border-color: #c4c7d0;
-      box-shadow: 0 5px 14px rgba(36, 38, 50, .13);
-    }
-    .download-button:active { transform: translateY(0) scale(.98); }
-    .download-button:focus-visible { outline: 3px solid rgba(85, 89, 103, .28); outline-offset: 3px; }
-    .download-button.is-dragging { cursor: grabbing; transform: scale(1.02); transition: box-shadow .15s ease; }
-    .download-button.is-busy .icon-wrap { animation: icon-bob .9s ease-in-out infinite; }
-    .icon-wrap {
-      display: grid;
-      width: 38px;
-      height: 38px;
-      flex: 0 0 38px;
-      place-items: center;
-      border: 1px solid #dcdfe5;
-      border-radius: 4px;
-      color: #fff;
-      background: linear-gradient(145deg, #858997, #41434e);
-      box-shadow: 0 2px 5px rgba(45, 47, 57, .16);
-    }
-    .icon-wrap svg { width: 21px; height: 21px; }
-    .button-copy { display: grid; gap: 3px; min-width: 0; }
-    .button-title { font-size: 14px; line-height: 1.2; font-weight: 650; letter-spacing: .005em; }
-    .button-version { color: #777b86; font-size: 11px; line-height: 1.2; font-weight: 500; }
-    .button-grip { display: grid; margin-left: auto; color: #999da8; }
-    .button-grip svg { width: 12px; height: 18px; }
-    .toast-stack {
-      position: fixed;
-      top: auto;
-      right: 14px;
-      bottom: 20vh;
-      display: grid;
-      gap: 10px;
-      width: min(380px, calc(100vw - 28px));
-      pointer-events: none;
-    }
-    .toast {
-      position: relative;
-      display: grid;
-      grid-template-columns: 38px minmax(0, 1fr) 22px;
-      align-items: start;
-      gap: 12px;
+    .pill {
+      position: absolute;
+      top: 0;
+      right: 0;
+      display: flex;
+      align-items: center;
+      height: ${DOCK_SIZE}px;
+      justify-content: flex-end;
+      width: ${DOCK_SIZE}px;
       overflow: hidden;
-      padding: 10px 12px 12px;
-      border: 1px solid rgba(255, 255, 255, .78);
-      border-radius: 17px;
-      background: rgba(255, 255, 255, .91);
-      box-shadow: 0 14px 40px rgba(26, 31, 66, .16), 0 2px 8px rgba(26, 31, 66, .06);
-      color: #24253b;
-      pointer-events: auto;
-      transition: translate .28s cubic-bezier(.2, .8, .2, 1);
-      backdrop-filter: blur(18px);
-      -webkit-backdrop-filter: blur(18px);
-      animation: toast-in .35s cubic-bezier(.2, .8, .2, 1) both;
+      padding: 0 ${DOCK_SIZE - 2}px 0 0;
+      border: 1px solid #8f1515;
+      border-radius: ${DOCK_SIZE / 2}px;
+      color: #fff;
+      background: #b31b1b;
+      box-shadow: 0 2px 8px rgba(60, 10, 10, .25);
+      cursor: pointer;
+      /* Collapse: let the text fade first, then close the pill with a short delay. */
+      transition: width .3s cubic-bezier(.4, 0, .2, 1) .08s, background-color .2s ease, box-shadow .25s ease;
     }
-    .toast.is-leaving { animation: toast-out .24s ease both; }
-    .toast-icon {
+    .dock.expand-right .pill { right: auto; left: 0; justify-content: flex-start; padding: 0 0 0 ${DOCK_SIZE - 2}px; }
+    .dock:hover .pill,
+    .dock:focus-within .pill,
+    .dock:not([data-state="idle"]) .pill {
+      width: var(--pill-width, ${DOCK_SIZE}px);
+      box-shadow: 0 4px 14px rgba(60, 10, 10, .28);
+      transition: width .38s cubic-bezier(.22, 1, .36, 1), background-color .2s ease, box-shadow .25s ease;
+    }
+    .dock:hover .pill { background: #9f1818; }
+    .dock[data-state="error"] .pill { background: #7d1212; }
+    .dock.is-dragging .pill { cursor: grabbing; transition: none; }
+    .label {
+      flex: none;
+      max-width: ${LABEL_MAX_WIDTH - DOCK_SIZE}px;
+      padding: 0 8px 0 16px;
+      overflow: hidden;
+      font-size: 13px;
+      line-height: 1;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      opacity: 0;
+      transform: translateX(10px);
+      transition: opacity .14s ease, transform .2s ease;
+    }
+    .dock.expand-right .label { padding: 0 16px 0 8px; transform: translateX(-10px); }
+    .dock:hover .label,
+    .dock:focus-within .label,
+    .dock:not([data-state="idle"]) .label {
+      opacity: 1;
+      transform: none;
+      transition: opacity .24s ease .1s, transform .36s cubic-bezier(.22, 1, .36, 1) .06s;
+    }
+    .label b { font-weight: 700; }
+    .fab {
+      position: absolute;
+      inset: 3px;
       display: grid;
-      width: 32px;
-      height: 32px;
       place-items: center;
-      border-radius: 13px;
-      color: #5145cf;
-      background: linear-gradient(145deg, #eeedff, #e5f5ff);
-    }
-    .toast[data-kind="success"] .toast-icon { color: #13835f; background: #e4f8ef; }
-    .toast[data-kind="error"] .toast-icon { color: #bd3d4a; background: #fff0f0; }
-    .toast-icon svg { width: 18px; height: 18px; }
-    .toast-copy { display: grid; gap: 3px; min-width: 0; padding-top: 1px; }
-    .toast-title { color: #25263c; font-size: 13px; line-height: 1.25; font-weight: 750; }
-    .toast-message { overflow: hidden; color: #686a7d; font-size: 12px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
-    .toast-close {
-      display: grid;
-      width: 22px;
-      height: 22px;
       padding: 0;
       border: 0;
-      border-radius: 8px;
-      color: #999bad;
-      background: transparent;
-      font: inherit;
-      font-size: 18px;
-      line-height: 1;
+      border-radius: 50%;
+      color: #b31b1b;
+      background: #fff;
       cursor: pointer;
+      font: inherit;
+      transition: color .2s ease, transform .25s cubic-bezier(.22, 1, .36, 1);
     }
-    .toast-close:hover { color: #45465c; background: #f0f0f5; }
-    .toast-progress {
+    .dock:hover .fab { transform: scale(1.06); }
+    .dock.is-dragging .fab { transform: scale(1); }
+    .fab:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+    .dock.is-dragging .fab { cursor: grabbing; }
+    .dock[data-state="done"] .fab { color: #2e7d32; }
+    .fab svg { grid-area: 1 / 1; width: 18px; height: 18px; }
+    .fab .ring {
       position: absolute;
-      right: 0;
-      bottom: 0;
-      left: 0;
-      height: 3px;
-      transform-origin: left;
-      background: linear-gradient(90deg, #7566f4, #49b9e8);
-      animation: toast-progress var(--toast-duration) linear forwards;
+      inset: -3px;
+      width: ${DOCK_SIZE}px;
+      height: ${DOCK_SIZE}px;
+      opacity: 0;
     }
-    .toast[data-kind="success"] .toast-progress { background: linear-gradient(90deg, #1ca879, #6bd4ab); }
-    .toast[data-kind="error"] .toast-progress { background: linear-gradient(90deg, #e05d68, #ffb07b); }
-    @keyframes button-enter { from { opacity: 0; transform: translateY(18px) scale(.92); } to { opacity: 1; transform: translateY(0) scale(1); } }
-    @keyframes icon-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
-    @keyframes toast-in { from { opacity: 0; transform: translate3d(18px, -8px, 0) scale(.97); } to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); } }
-    @keyframes toast-out { to { opacity: 0; transform: translate3d(16px, -4px, 0) scale(.98); } }
-    @keyframes toast-progress { to { transform: scaleX(0); } }
+    .dock[data-state="busy"] .fab { cursor: progress; }
+    .dock[data-state="busy"] .ring { opacity: 1; animation: spin 1s linear infinite; }
+    .icon { display: none; }
+    .dock[data-state="idle"] .icon-download,
+    .dock[data-state="busy"] .icon-download,
+    .dock[data-state="done"] .icon-done,
+    .dock[data-state="error"] .icon-error { display: block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
     @media (prefers-reduced-motion: reduce) {
-      *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: .01ms !important; }
+      *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
     }
   `;
   shadow.appendChild(style);
 
-  const toastStack = document.createElement('div');
-  toastStack.className = 'toast-stack';
-  toastStack.setAttribute('aria-live', 'polite');
-  toastStack.setAttribute('aria-atomic', 'false');
-  shadow.appendChild(toastStack);
+  const versionLabel = selectedVersion ? `${paperId}v${selectedVersion}` : paperId;
+  const idleLabel = `<b>${escapeHtml(versionLabel)}</b>`;
 
-  const button = document.createElement('button');
-  button.className = 'download-button';
-  button.type = 'button';
-  button.setAttribute('aria-label', selectedVersion
+  const dock = document.createElement('div');
+  dock.className = 'dock';
+  dock.dataset.state = 'idle';
+  dock.innerHTML = `
+    <div class="pill">
+      <span class="label" role="status" aria-live="polite">${idleLabel}</span>
+    </div>
+    <button class="fab" type="button">
+      <svg class="ring" viewBox="0 0 ${DOCK_SIZE} ${DOCK_SIZE}" fill="none" aria-hidden="true">
+        <circle cx="${DOCK_SIZE / 2}" cy="${DOCK_SIZE / 2}" r="${DOCK_SIZE / 2 - 1.5}" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-dasharray="36 200" />
+      </svg>
+      <svg class="icon icon-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 4v11m0 0 4.5-4.5M12 15l-4.5-4.5M5 20h14" />
+      </svg>
+      <svg class="icon icon-done" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="m5 12.5 4.5 4.5L19 7.5" />
+      </svg>
+      <svg class="icon icon-error" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true">
+        <path d="M12 6v8m0 4h.01" />
+      </svg>
+    </button>
+  `;
+  shadow.appendChild(dock);
+
+  const label = dock.querySelector('.label');
+  const fab = dock.querySelector('.fab');
+  fab.setAttribute('aria-label', selectedVersion
     ? `下载 arXiv 论文 ${paperId} 第 ${selectedVersion} 版 PDF`
     : `下载 arXiv 论文 ${paperId} PDF`);
-  button.innerHTML = `
-    <span class="icon-wrap" aria-hidden="true">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M12 4v11m0 0 4-4m-4 4-4-4M5 20h14" />
-      </svg>
-    </span>
-    <span class="button-copy">
-      <span class="button-title">Download</span>
-      <span class="button-version">${escapeHtml(selectedVersion ? `${paperId}v${selectedVersion}` : paperId)}</span>
-    </span>
-    <span class="button-grip" aria-hidden="true">
-      <svg viewBox="0 0 12 18" fill="currentColor"><circle cx="3" cy="3" r="1.25"/><circle cx="9" cy="3" r="1.25"/><circle cx="3" cy="9" r="1.25"/><circle cx="9" cy="9" r="1.25"/><circle cx="3" cy="15" r="1.25"/><circle cx="9" cy="15" r="1.25"/></svg>
-    </span>
-  `;
-  shadow.appendChild(button);
 
   function escapeHtml(value) {
     return value.replace(/[&<>"']/g, (character) => ({
@@ -260,64 +241,31 @@
     })[character]);
   }
 
-  function showToast(kind, title, message, duration = 4800) {
-    const icons = {
-      info: '<path d="M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17Z"/><path d="M12 10.8v5.1m0-8.1h.01"/>',
-      success: '<path d="m5.5 12.2 4.1 4.1 9-9"/>',
-      error: '<path d="M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17Z"/><path d="m9 9 6 6m0-6-6 6"/>'
-    };
-    const toast = document.createElement('div');
-    toast.className = 'toast';
-    toast.dataset.kind = kind;
-    toast.style.setProperty('--toast-duration', `${duration}ms`);
-    toast.innerHTML = `
-      <span class="toast-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${icons[kind]}</svg></span>
-      <span class="toast-copy"><span class="toast-title">${escapeHtml(title)}</span><span class="toast-message">${escapeHtml(message)}</span></span>
-      <button class="toast-close" type="button" aria-label="关闭通知">×</button>
-      <span class="toast-progress" aria-hidden="true"></span>
-    `;
+  // Width cannot transition to auto, so size the pill from the label's natural width.
+  function updatePillWidth() {
+    dock.style.setProperty('--pill-width', `${label.offsetWidth + DOCK_SIZE}px`);
+  }
+  updatePillWidth();
 
-    const captureToastPositions = () => new Map(
-      Array.from(toastStack.children, (item) => [item, item.getBoundingClientRect().top])
-    );
-    const animateToastReflow = (previousPositions) => {
-      for (const item of toastStack.children) {
-        const previousTop = previousPositions.get(item);
-        if (previousTop === undefined) continue;
-        const deltaY = previousTop - item.getBoundingClientRect().top;
-        if (Math.abs(deltaY) < 1) continue;
-        item.style.translate = `0px ${deltaY}px`;
-      }
-      void toastStack.offsetHeight;
-      requestAnimationFrame(() => {
-        for (const item of toastStack.children) {
-          if (previousPositions.has(item)) item.style.translate = '0px 0px';
-        }
-      });
-    };
+  let resetTimer = 0;
+  function setState(state, html = idleLabel, title = '', resetAfter = 0) {
+    window.clearTimeout(resetTimer);
+    dock.dataset.state = state;
+    label.innerHTML = html;
+    label.title = title;
+    updatePillWidth();
+    if (state === 'busy') fab.setAttribute('aria-busy', 'true');
+    else fab.removeAttribute('aria-busy');
+    if (resetAfter) resetTimer = window.setTimeout(() => setState('idle'), resetAfter);
+  }
 
-    let removed = false;
-    const remove = () => {
-      if (removed) return;
-      removed = true;
-      toast.classList.add('is-leaving');
-      window.setTimeout(() => {
-        const previousPositions = captureToastPositions();
-        toast.remove();
-        animateToastReflow(previousPositions);
-      }, 260);
-    };
-    toast.querySelector('.toast-close').addEventListener('click', remove);
-    const previousPositions = captureToastPositions();
-    toastStack.appendChild(toast);
-    animateToastReflow(previousPositions);
-    window.setTimeout(remove, duration);
+  function showError(message) {
+    setState('error', escapeHtml(message), message, ERROR_RESET_MS);
   }
 
   function clampPosition(left, top) {
-    const bounds = button.getBoundingClientRect();
-    const maxLeft = Math.max(POSITION_MARGIN, window.innerWidth - bounds.width - POSITION_MARGIN);
-    const maxTop = Math.max(POSITION_MARGIN, window.innerHeight - bounds.height - POSITION_MARGIN);
+    const maxLeft = Math.max(POSITION_MARGIN, window.innerWidth - DOCK_SIZE - POSITION_MARGIN);
+    const maxTop = Math.max(POSITION_MARGIN, window.innerHeight - DOCK_SIZE - POSITION_MARGIN);
     return {
       left: Math.min(Math.max(POSITION_MARGIN, left), maxLeft),
       top: Math.min(Math.max(POSITION_MARGIN, top), maxTop)
@@ -326,8 +274,10 @@
 
   function applyPosition(left, top, persist = false) {
     const position = clampPosition(left, top);
-    button.style.left = `${position.left}px`;
-    button.style.top = `${position.top}px`;
+    dock.style.left = `${position.left}px`;
+    dock.style.top = `${position.top}px`;
+    // Expand towards whichever side has room for the label.
+    dock.classList.toggle('expand-right', position.left + DOCK_SIZE < LABEL_MAX_WIDTH);
     if (persist) {
       try {
         window.localStorage.setItem(POSITION_KEY, JSON.stringify(position));
@@ -347,7 +297,7 @@
     } catch (_error) {
       // Fall back to the default corner when saved state is unavailable or invalid.
     }
-    return applyPosition(window.innerWidth - 218, window.innerHeight - 91);
+    return applyPosition(window.innerWidth - DOCK_SIZE - 24, window.innerHeight - DOCK_SIZE - 24);
   }
 
   let position = loadPosition();
@@ -355,7 +305,7 @@
   let dragged = false;
   let suppressClick = false;
 
-  button.addEventListener('pointerdown', (event) => {
+  dock.addEventListener('pointerdown', (event) => {
     if (event.button !== 0 && event.pointerType === 'mouse') return;
     dragStart = {
       pointerId: event.pointerId,
@@ -365,16 +315,16 @@
       top: position.top
     };
     dragged = false;
-    button.setPointerCapture(event.pointerId);
+    dock.setPointerCapture(event.pointerId);
   });
 
-  button.addEventListener('pointermove', (event) => {
+  dock.addEventListener('pointermove', (event) => {
     if (!dragStart || event.pointerId !== dragStart.pointerId) return;
     const deltaX = event.clientX - dragStart.x;
     const deltaY = event.clientY - dragStart.y;
     if (!dragged && Math.hypot(deltaX, deltaY) < 5) return;
     dragged = true;
-    button.classList.add('is-dragging');
+    dock.classList.add('is-dragging');
     position = applyPosition(dragStart.left + deltaX, dragStart.top + deltaY);
   });
 
@@ -386,47 +336,43 @@
       window.setTimeout(() => { suppressClick = false; }, 350);
     }
     dragStart = null;
-    button.classList.remove('is-dragging');
+    dock.classList.remove('is-dragging');
   };
 
-  button.addEventListener('pointerup', finishDrag);
-  button.addEventListener('pointercancel', finishDrag);
+  dock.addEventListener('pointerup', finishDrag);
+  dock.addEventListener('pointercancel', finishDrag);
   window.addEventListener('resize', () => {
     position = applyPosition(position.left, position.top, true);
   });
 
-  let downloadInProgress = false;
-  button.addEventListener('click', () => {
+  function startDownload() {
     if (suppressClick) {
       suppressClick = false;
       return;
     }
-    if (downloadInProgress) return;
+    if (dock.dataset.state === 'busy') return;
 
     if (!selectedVersion || !pdfUrl) {
-      showToast('error', '无法识别论文版本', '请确认页面中包含 Submission history 后重试。', 6000);
+      showError('无法识别论文版本，请确认页面中有 Submission history');
       return;
     }
 
     if (!historyVersions.length) {
-      showToast('error', '无法读取版本历史', '页面中没有可识别的 Submission history 版本记录。', 6000);
+      showError('页面中没有可识别的 Submission history 版本记录');
       return;
     }
 
     if (requestedVersion !== null && !historyVersions.includes(requestedVersion)) {
-      showToast('error', '找不到指定版本', `Submission history 中没有 ${paperId}v${requestedVersion}。`, 6000);
+      showError(`Submission history 中没有 ${paperId}v${requestedVersion}`);
       return;
     }
 
     if (typeof GM_xmlhttpRequest !== 'function') {
-      showToast('error', '下载功能不可用', '请检查 Tampermonkey 是否已启用此脚本及下载权限。', 6000);
+      showError('下载功能不可用，请检查 Tampermonkey 是否启用了此脚本');
       return;
     }
 
-    downloadInProgress = true;
-    button.classList.add('is-busy');
-    button.setAttribute('aria-busy', 'true');
-    showToast('info', '开始下载论文', filename, 5200);
+    setState('busy', '正在下载…', filename);
 
     try {
       GM_xmlhttpRequest({
@@ -434,30 +380,17 @@
         method: 'GET',
         responseType: 'blob',
         onerror: (error) => {
-          downloadInProgress = false;
-          button.classList.remove('is-busy');
-          button.removeAttribute('aria-busy');
           const reason = error && error.error ? `（${error.error}）` : '';
-          showToast('error', '下载失败', `请检查网络或 Tampermonkey 权限${reason}。`, 6500);
+          showError(`下载失败，请检查网络或 Tampermonkey 权限${reason}`);
         },
         ontimeout: () => {
-          downloadInProgress = false;
-          button.classList.remove('is-busy');
-          button.removeAttribute('aria-busy');
-          showToast('error', '下载超时', '网络请求超时，请稍后重试。', 6500);
+          showError('下载超时，请稍后重试');
         },
         onload: (response) => {
-          const resetDownloadState = () => {
-            downloadInProgress = false;
-            button.classList.remove('is-busy');
-            button.removeAttribute('aria-busy');
-          };
-
           const blob = response.response;
           const isBlobLike = blob && typeof blob.size === 'number' && typeof blob.slice === 'function';
           if (response.status < 200 || response.status >= 300 || !isBlobLike) {
-            resetDownloadState();
-            showToast('error', '下载失败', `arXiv 返回了无效响应（HTTP ${response.status || '未知'}）。`, 6500);
+            showError(`下载失败：arXiv 返回 HTTP ${response.status || '未知状态'}`);
             return;
           }
 
@@ -471,19 +404,17 @@
             anchor.click();
             anchor.remove();
             window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
-            resetDownloadState();
-            showToast('success', '论文下载完成', `${filename} · PDF 数据已接收并交给浏览器保存。`, 5600);
+            setState('done', `已保存为 ${escapeHtml(filename)}`, filename, DONE_RESET_MS);
           } catch (error) {
-            resetDownloadState();
-            showToast('error', '无法保存论文', error && error.message ? error.message : '浏览器未能启动文件保存。', 6500);
+            showError(`无法保存论文：${error && error.message ? error.message : '浏览器未能启动文件保存'}`);
           }
         }
       });
     } catch (error) {
-      downloadInProgress = false;
-      button.classList.remove('is-busy');
-      button.removeAttribute('aria-busy');
-      showToast('error', '无法启动下载', error && error.message ? error.message : '请检查 Tampermonkey 设置。', 6500);
+      showError(`无法启动下载：${error && error.message ? error.message : '请检查 Tampermonkey 设置'}`);
     }
-  });
+  }
+
+  // Pointer capture retargets clicks to the dock, so listen there rather than on the fab.
+  dock.addEventListener('click', startDownload);
 })();
