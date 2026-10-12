@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         arXiv PDF 重命名下载
-// @namespace    https://github.com/pluiefox/tampermonkey-scripts
+// @namespace    https://github.com/pluiez/tampermonkey-scripts
 // @version      1.3.0
 // @description  在 arXiv 论文页面通过可拖动的悬浮按钮下载指定版本 PDF
 // @match        https://arxiv.org/abs/*
