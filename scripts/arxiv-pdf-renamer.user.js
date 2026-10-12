@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         arXiv 浮动 PDF 下载器
+// @name         arXiv PDF 重命名下载
 // @namespace    https://github.com/pluiefox/tampermonkey-scripts
 // @version      1.2.1
 // @description  在 arXiv 论文页面通过可拖动的悬浮按钮下载指定版本 PDF
@@ -75,7 +75,7 @@
     : '';
 
   const host = document.createElement('div');
-  host.id = 'arxiv-floating-pdf-host';
+  host.id = 'arxiv-pdf-renamer-host';
   document.documentElement.appendChild(host);
   const shadow = host.attachShadow({ mode: 'open' });
 
